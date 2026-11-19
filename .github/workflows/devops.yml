@@ -1,4 +1,4 @@
-name: DevOps Pipeline
+name: DevSecOps Pipeline
 
 on:
   push:
@@ -17,16 +17,44 @@ jobs:
       - run: npm ci
       - run: npm test
 
+  sast:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Retire.js scan
+        run: npx --yes retire --path . --severity high
+
   build-app:
     runs-on: ubuntu-latest
-    needs: [unit-tests]
+    needs: [unit-tests, sast]
     steps:
       - uses: actions/checkout@v4
       - name: Build Docker image
         run: docker build -t devops-demo:${{ github.sha }} .
 
-  deploy-qa:
+  dast:
     runs-on: ubuntu-latest
     needs: [build-app]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build and start the app
+        run: |
+          docker build -t devops-demo:${{ github.sha }} .
+          docker run -d --name app -p 3000:3000 devops-demo:${{ github.sha }}
+          sleep 5
+          curl --fail http://localhost:3000/health
+      - name: Nuclei scan
+        run: |
+          docker run --rm --network host projectdiscovery/nuclei:latest \
+            -u http://localhost:3000
+
+  deploy-qa:
+    runs-on: ubuntu-latest
+    needs: [dast]
     steps:
       - run: echo "Deployed to QA environment"
